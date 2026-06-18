@@ -1,0 +1,25 @@
+# Local input files exported from SharePoint
+inputs/*
+!inputs/.gitkeep
+
+# Generated previews, execution results, and review candidates
+outputs/*
+!outputs/.gitkeep
+
+# Runtime logs
+logs/*
+!logs/.gitkeep
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Local editor and OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
