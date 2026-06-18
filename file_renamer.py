@@ -36,6 +36,8 @@ LOW_CONFIDENCE_THRESHOLD = 0.55
 DEFAULT_INPUT_DIR = Path("inputs")
 DEFAULT_OUTPUT_DIR = Path("outputs")
 DEFAULT_LOG_DIR = Path("logs")
+EXCEL_EXTENSIONS = {".xlsx", ".xls"}
+CSV_EXTENSIONS = {".csv"}
 
 
 @dataclass(frozen=True)
@@ -257,9 +259,9 @@ def make_preview_row(row: pd.Series) -> dict[str, object]:
 
 
 def load_input(path: Path) -> pd.DataFrame:
-    if path.suffix.lower() in {".xlsx", ".xls"}:
+    if path.suffix.lower() in EXCEL_EXTENSIONS:
         return pd.read_excel(path)
-    if path.suffix.lower() == ".csv":
+    if path.suffix.lower() in CSV_EXTENSIONS:
         return pd.read_csv(path, encoding="utf-8-sig")
     raise ValueError("入力ファイルは .csv / .xlsx / .xls に対応しています")
 
@@ -276,53 +278,115 @@ def create_preview(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(make_preview_row(row) for _, row in df.iterrows())
 
 
-def source_file_path(path_value: str, old_name: str) -> Path:
+def build_new_path(path_value: str, old_name: str, new_name: str) -> str:
+    if not new_name:
+        return ""
     path = Path(path_value)
     if path.name == old_name:
-        return path
-    return path / old_name
+        return str(path.with_name(new_name))
+    return str(path / new_name)
 
 
-def rename_file(old_path: Path, new_name: str, dry_run: bool = True) -> tuple[bool, str]:
-    new_path = old_path.with_name(new_name)
-    if dry_run:
-        return True, f"dry-run: {old_path} -> {new_path}"
-    if not old_path.exists():
-        return False, f"元ファイルが存在しません: {old_path}"
-    if new_path.exists():
-        return False, f"同名ファイルが既に存在します: {new_path}"
-    try:
-        old_path.rename(new_path)
-        return True, f"renamed: {old_path} -> {new_path}"
-    except OSError as exc:
-        return False, f"リネーム失敗: {old_path} -> {new_path}: {exc}"
+def create_renamed_list(df: pd.DataFrame, preview: pd.DataFrame) -> pd.DataFrame:
+    output = df.reset_index(drop=True).copy()
+    preview = preview.reset_index(drop=True)
 
-
-def execute_renames(preview: pd.DataFrame, dry_run: bool = True) -> pd.DataFrame:
-    results: list[dict[str, object]] = []
-    targets = preview[~preview["excluded"]].copy()
-
-    for _, row in targets.iterrows():
-        old_path = source_file_path(str(row["path"]), str(row["old_name"]))
-        ok, message = rename_file(old_path, str(row["new_name"]), dry_run=dry_run)
-        log = logging.info if ok else logging.error
-        log(message)
-        results.append(
-            {
-                "old_name": row["old_name"],
-                "new_name": row["new_name"],
-                "path": row["path"],
-                "success": ok,
-                "message": message,
-            }
-        )
-
-    return pd.DataFrame(results)
+    output.insert(0, "旧ファイル名", preview["old_name"])
+    output.insert(1, "新ファイル名", preview["new_name"])
+    output.insert(
+        2,
+        "新パス",
+        [
+            build_new_path(str(row["path"]), str(row["old_name"]), str(row["new_name"]))
+            for _, row in preview.iterrows()
+        ],
+    )
+    output["リネーム対象外"] = preview["excluded"]
+    output["対象外理由"] = preview["exclude_reason"]
+    output["needs_content_analysis"] = preview["needs_content_analysis"]
+    output["confidence_score"] = preview["confidence_score"]
+    output["判定理由"] = preview["判定理由"]
+    output["業務分類"] = preview["business_category"]
+    output["ファイル種別"] = preview["file_type"]
+    output["年月"] = preview["year_month"]
+    output["状態"] = preview["status"]
+    return output
 
 
 def write_csv(df: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False, encoding="utf-8-sig")
+
+
+def write_excel(df: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_excel(path, index=False)
+
+
+def make_run_output_dir(base_dir: Path = DEFAULT_OUTPUT_DIR) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = base_dir / timestamp
+    if not run_dir.exists():
+        return run_dir
+
+    for suffix in range(2, 100):
+        candidate = base_dir / f"{timestamp}_{suffix:02d}"
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError("出力フォルダ名を作成できませんでした")
+
+
+def discover_input_files(input_dir: Path = DEFAULT_INPUT_DIR) -> list[Path]:
+    if not input_dir.exists():
+        return []
+
+    excel_files = sorted(
+        path for path in input_dir.iterdir()
+        if path.is_file()
+        and path.suffix.lower() in EXCEL_EXTENSIONS
+        and not path.name.startswith("~$")
+    )
+    if excel_files:
+        return excel_files
+
+    return sorted(
+        path for path in input_dir.iterdir()
+        if path.is_file()
+        and path.suffix.lower() in CSV_EXTENSIONS
+        and not path.name.startswith("~$")
+    )
+
+
+def select_input_file(input_arg: Path | None) -> Path:
+    if input_arg:
+        return input_arg
+
+    candidates = discover_input_files()
+    if not candidates:
+        raise FileNotFoundError(
+            "inputsフォルダに入力ファイルがありません。"
+            "SharePoint一覧のExcelを inputs に置いてから再実行してください。"
+        )
+
+    if len(candidates) == 1:
+        selected = candidates[0]
+        print(f"入力ファイルを自動選択しました: {selected}")
+        return selected
+
+    print("inputsフォルダに複数の入力ファイルがあります。使用するファイルを番号で選んでください。")
+    for index, path in enumerate(candidates, start=1):
+        print(f"{index}: {path.name}")
+
+    while True:
+        answer = input("番号を入力してEnterを押してください: ").strip()
+        try:
+            selected_index = int(answer)
+        except ValueError:
+            print("数字で入力してください。")
+            continue
+        if 1 <= selected_index <= len(candidates):
+            return candidates[selected_index - 1]
+        print(f"1から{len(candidates)}の番号を入力してください。")
 
 
 def create_sample_csv(path: Path) -> None:
@@ -382,22 +446,34 @@ def configure_logging(log_path: Path) -> None:
 
 
 def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="SharePointファイル名リネームプレビュー作成ツール")
-    parser.add_argument("input", nargs="?", type=Path, help="SharePointからエクスポートしたCSV/Excel")
+    parser = argparse.ArgumentParser(description="SharePoint一覧ファイル名整理ツール")
+    parser.add_argument(
+        "input",
+        nargs="?",
+        type=Path,
+        help="SharePointからエクスポートしたCSV/Excel。省略時は inputs フォルダから自動選択",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="実行結果をまとめるフォルダ。省略時は outputs/YYYYMMDD_HHMMSS を自動作成",
+    )
+    parser.add_argument(
+        "--renamed-list-output",
+        type=Path,
+        help="旧名を残して新ファイル名を追加したExcelの出力先。省略時は実行時刻フォルダ内",
+    )
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT_DIR / "rename_preview.csv",
-        help="プレビューCSVの出力先",
+        help="プレビューCSVの出力先。省略時は実行時刻フォルダ内",
     )
     parser.add_argument(
         "--analysis-output",
         type=Path,
-        default=DEFAULT_OUTPUT_DIR / "content_analysis_candidates.csv",
-        help="中身解析候補CSVの出力先",
+        help="中身解析候補CSVの出力先。省略時は実行時刻フォルダ内",
     )
-    parser.add_argument("--log", type=Path, default=DEFAULT_LOG_DIR / "rename.log", help="ログファイルの出力先")
-    parser.add_argument("--execute", action="store_true", help="実際にファイル名を変更します（指定なしはdry-run）")
+    parser.add_argument("--log", type=Path, help="ログファイルの出力先。省略時は実行時刻フォルダ内")
     parser.add_argument(
         "--create-sample",
         nargs="?",
@@ -410,34 +486,40 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = parse_args(argv)
-    configure_logging(args.log)
 
     if args.create_sample:
+        configure_logging(args.log or DEFAULT_LOG_DIR / "rename.log")
         create_sample_csv(args.create_sample)
         logging.info("サンプルCSVを作成しました: %s", args.create_sample)
         return 0
 
-    if not args.input:
-        logging.error("入力ファイルを指定してください。例: python file_renamer.py input.csv")
-        return 2
-
     try:
-        df = load_input(args.input)
+        run_dir = args.output_dir or make_run_output_dir()
+        renamed_list_output = args.renamed_list_output or run_dir / "renamed_file_list.xlsx"
+        preview_output = args.output or run_dir / "rename_preview.csv"
+        analysis_output = args.analysis_output or run_dir / "content_analysis_candidates.csv"
+        log_output = args.log or run_dir / "rename.log"
+        configure_logging(log_output)
+        logging.info("出力フォルダ: %s", run_dir)
+
+        input_path = select_input_file(args.input)
+        logging.info("入力ファイル: %s", input_path)
+
+        df = load_input(input_path)
         preview = create_preview(df)
-        write_csv(preview, args.output)
+        renamed_list = create_renamed_list(df, preview)
+
+        write_excel(renamed_list, renamed_list_output)
+        write_csv(preview, preview_output)
 
         candidates = preview[preview["needs_content_analysis"]].copy()
-        write_csv(candidates, args.analysis_output)
+        write_csv(candidates, analysis_output)
 
-        results = execute_renames(preview, dry_run=not args.execute)
-        if not results.empty:
-            result_path = args.output.parent / "rename_results.csv"
-            write_csv(results, result_path)
-            logging.info("リネーム結果を出力しました: %s", result_path)
-
-        logging.info("プレビューを出力しました: %s", args.output)
-        logging.info("中身解析候補を出力しました: %s", args.analysis_output)
-        logging.info("モード: %s", "execute" if args.execute else "dry-run")
+        logging.info("整理済み一覧Excelを出力しました: %s", renamed_list_output)
+        logging.info("プレビューを出力しました: %s", preview_output)
+        logging.info("中身解析候補を出力しました: %s", analysis_output)
+        logging.info("ログを出力しました: %s", log_output)
+        logging.info("実ファイル名の変更は行っていません")
         return 0
     except Exception as exc:
         logging.exception("処理に失敗しました: %s", exc)
