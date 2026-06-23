@@ -12,26 +12,62 @@ import pandas as pd
 
 
 BUSINESS_RULES = {
-    "給与": ["給与", "タイムカード"],
-    "経費": ["経費", "請求書", "銀行", "カード"],
-    "統計調査": ["統計", "法人企業統計調査"],
+    "給与": ["給与", "タイムカード", "MF給与", "給与改定", "賞与", "期末賞与", "賃金"],
+    "経費": ["経費", "請求書", "銀行", "カード", "立替経費", "通勤費", "精算", "ライフカード", "楽天カード", "トヨレン", "タイムズ", "七十七", "shichijushichi"],
+    "統計調査": ["統計", "法人企業統計調査", "調査票", "corp-stat", "corp_stat"],
+    "税務": ["税", "法人税", "所得税", "住民税", "固定資産税", "源泉", "源泉徴収票", "年末調整", "支払調書", "納税", "e-Tax"],
+    "会計": ["会計", "MF会計", "仕訳", "売掛金", "買掛金", "固定資産", "決算", "原価", "財務", "影山事務所", "finance"],
+    "労務": ["労務", "勤怠", "有休", "雇用", "退職", "入社", "労働", "社労士", "算定基礎", "年度更新", "賞与支払届"],
+    "社会保険": ["社会保険", "保険", "年金", "健康保険", "厚生年金", "雇用保険"],
+    "福利厚生": ["福利厚生", "健康診断", "ストレスチェック", "健康経営", "401k", "両立支援"],
+    "契約": ["契約", "契約書", "請負", "受注", "発注", "派遣", "入札", "サイバー契約", "契約更新"],
+    "法人": ["法人", "株主総会", "取締役会", "議事録", "登記", "定款", "役員", "事前確定届", "電子証明書", "印鑑証明"],
+    "総務": ["総務", "証明書", "登記簿", "謄本", "押印", "郵送", "社内環境", "備品", "書類管理", "組織変更", "PC持出し", "誓約書"],
+    "営業": ["営業", "受注", "見積", "顧客", "請負"],
+    "全社": ["全社", "朝会", "会議", "面談", "評価", "周知", "組織", "インターン", "引継ぎ", "年間業務"],
 }
 
 FILE_TYPE_RULES = {
     "元データ": ["生データ", "raw", "input"],
     "加工": ["集計", "算出", "加工"],
-    "出力": ["送付用", "提出", "final"],
+    "出力": ["送付用", "提出", "final", "filled"],
     "マニュアル": ["マニュアル", "readme"],
+    "議事録": ["議事録"],
+    "契約書": ["契約書", "契約更新", "請負契約", "発注契約", "受注契約"],
+    "証明書": ["証明書", "登記簿", "謄本", "印鑑証明", "電子証明書", "納税証明", "源泉徴収票"],
+    "申請書": ["申請", "届出", "申告", "算定基礎届", "賞与支払届", "年度更新"],
+    "通知書": ["通知書", "受領"],
+    "明細": ["明細", "明細DL", "通帳写し"],
+    "証憑": ["請求書", "領収書", "レシート", "receipt"],
+    "仕訳": ["仕訳"],
+    "報告書": ["報告書", "稼働状況報告"],
+    "管理表": ["管理表", "管理", "一覧", "台帳", "リスト", "index"],
+    "調査票": ["調査票"],
+    "ツール": ["ツール", "tool", "autofiller", "categorizer"],
+    "書類": ["書類", "誓約書", "概要書"],
+    "資料": ["資料", "会計資料", "支払調書", "PDF", "スキャン"],
 }
 
 STATUS_RULES = {
-    "raw": ["生データ", "raw", "input"],
-    "working": ["集計", "算出", "加工"],
-    "final": ["送付用", "提出", "final"],
+    "raw": ["生データ", "raw", "input", "受領", "取得", "明細DL", "通帳写し", "原本", "スキャン"],
+    "working": ["集計", "算出", "加工", "確認", "作成", "準備", "管理", "更新", "チェック", "仕訳"],
+    "final": ["送付用", "提出", "final", "送付", "申請", "申告", "納付", "交付", "押印", "届出"],
 }
 
 EXCLUDED_EXTENSIONS = {".json", ".log"}
 SYSTEM_FILE_NAMES = {"desktop.ini", "thumbs.db", ".ds_store"}
+MEANINGLESS_NAME_KEYWORDS = {
+    "別エクセル参照",
+    "資料",
+    "その他",
+    "不明",
+    "確認",
+    "作業",
+    "対応",
+    "todo",
+    "test",
+    "temp",
+}
 LOW_CONFIDENCE_THRESHOLD = 0.55
 DEFAULT_INPUT_DIR = Path("inputs")
 DEFAULT_OUTPUT_DIR = Path("outputs")
@@ -72,18 +108,45 @@ def match_keyword(text: str, rules: dict[str, list[str]], default: str = "その
     return Decision(value=default, reason="該当キーワードなし", confidence=0.0)
 
 
+def match_name_then_path(
+    name: str,
+    path: str,
+    rules: dict[str, list[str]],
+    default: str = "その他",
+) -> Decision:
+    name_decision = match_keyword(name, rules, default=default)
+    if name_decision.matched_keyword:
+        return Decision(
+            value=name_decision.value,
+            reason=f"ファイル名の{name_decision.reason}",
+            matched_keyword=name_decision.matched_keyword,
+            confidence=name_decision.confidence,
+        )
+
+    path_decision = match_keyword(path, rules, default=default)
+    if path_decision.matched_keyword:
+        return Decision(
+            value=path_decision.value,
+            reason=f"パスの{path_decision.reason}",
+            matched_keyword=path_decision.matched_keyword,
+            confidence=path_decision.confidence * 0.9,
+        )
+
+    return Decision(value=default, reason="ファイル名・パスに該当キーワードなし", confidence=0.0)
+
+
 def infer_business_category(name: str, path: str) -> Decision:
-    return match_keyword(combined_text(name, path), BUSINESS_RULES)
+    return match_name_then_path(name, path, BUSINESS_RULES)
 
 
 def infer_file_type(name: str, path: str) -> Decision:
-    return match_keyword(combined_text(name, path), FILE_TYPE_RULES)
+    return match_name_then_path(name, path, FILE_TYPE_RULES)
 
 
 def infer_status(name: str, path: str) -> Decision:
-    decision = match_keyword(combined_text(name, path), STATUS_RULES, default="unknown")
+    decision = match_name_then_path(name, path, STATUS_RULES, default="unknown")
     if decision.value == "unknown":
-        return Decision(value="unknown", reason="状態キーワードなし", confidence=0.0)
+        return Decision(value="unknown", reason="ファイル名・パスに状態キーワードなし", confidence=0.0)
     return decision
 
 
@@ -141,9 +204,12 @@ def is_system_file(name: str) -> bool:
 def should_exclude(row: pd.Series, name: str, path: str) -> tuple[bool, str]:
     suffix = Path(name).suffix.lower()
     text = combined_text(name, path)
+    item_type = normalize_text(row.get("アイテムの種類")).lower()
 
     if "~bromium" in path.lower():
         return True, "~BROMIUMを含むパス"
+    if item_type in {"フォルダー", "folder"}:
+        return True, "フォルダー行"
     if suffix in EXCLUDED_EXTENSIONS:
         return True, f"対象外拡張子（{suffix}）"
     if "audit" in text or "監査" in text:
@@ -163,7 +229,10 @@ def sanitize_component(value: str) -> str:
 
 def looks_meaningless(name: str) -> bool:
     stem = Path(name).stem
+    normalized = stem.strip().lower()
     if len(stem.strip()) <= 2:
+        return True
+    if normalized in {keyword.lower() for keyword in MEANINGLESS_NAME_KEYWORDS}:
         return True
     if re.fullmatch(r"[\W_]+", stem, flags=re.UNICODE):
         return True

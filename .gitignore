@@ -6,6 +6,8 @@ inputs/*
 outputs/*
 !outputs/.gitkeep
 
+/release
+
 # Runtime logs
 logs/*
 !logs/.gitkeep
