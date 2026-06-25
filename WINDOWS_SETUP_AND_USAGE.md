@@ -129,6 +129,7 @@ uv run python file_renamer.py inputs\sample_sharepoint_files.csv
 ```text
 outputs/YYYYMMDD_HHMMSS/renamed_file_list.xlsx
 outputs/YYYYMMDD_HHMMSS/rename_preview.csv
+outputs/YYYYMMDD_HHMMSS/folder_rename_preview.csv
 outputs/YYYYMMDD_HHMMSS/content_analysis_candidates.csv
 outputs/YYYYMMDD_HHMMSS/rename.log
 ```
@@ -157,6 +158,12 @@ inputsフォルダに複数の入力ファイルがあります。使用する�
 使いたいファイルの番号を入力してEnterを押します。
 
 出力された `outputs/YYYYMMDD_HHMMSS/renamed_file_list.xlsx` を開いて、新しいファイル名が想定どおりか確認してください。
+
+フォルダー名の候補だけ確認したい場合は、次を開きます。
+
+```text
+outputs/YYYYMMDD_HHMMSS/folder_rename_preview.csv
+```
 
 ## 10. 入力ファイルを指定して実行する
 
@@ -200,6 +207,12 @@ uv run python file_renamer.py inputs\sharepoint_files.csv --output outputs\test_
 
 ```powershell
 uv run python file_renamer.py inputs\sharepoint_files.csv --analysis-output outputs\test_run_001\analysis_test.csv
+```
+
+フォルダー名変更候補CSVの出力先を変える場合:
+
+```powershell
+uv run python file_renamer.py inputs\sharepoint_files.csv --folder-output outputs\test_run_001\folder_test.csv
 ```
 
 ログの出力先を変える場合:
@@ -265,6 +278,7 @@ uv pip install -r requirements.txt
 ```text
 outputs/YYYYMMDD_HHMMSS/renamed_file_list.xlsx
 outputs/YYYYMMDD_HHMMSS/rename_preview.csv
+outputs/YYYYMMDD_HHMMSS/folder_rename_preview.csv
 ```
 
 中身解析候補は次を確認します。

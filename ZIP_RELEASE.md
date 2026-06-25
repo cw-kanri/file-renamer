@@ -106,6 +106,7 @@ dir release\check\file-renamer
 - 実データのCSV/Excel
 - `rename_preview.csv`
 - `renamed_file_list.xlsx`
+- `folder_rename_preview.csv`
 - `content_analysis_candidates.csv`
 - `rename.log`
 - `.git`
@@ -157,4 +158,4 @@ uv run python file_renamer.py --create-sample
 uv run python file_renamer.py inputs\sample_sharepoint_files.csv
 ```
 
-`outputs/YYYYMMDD_HHMMSS/renamed_file_list.xlsx` と `outputs/YYYYMMDD_HHMMSS/rename_preview.csv` が作成されれば、配布ZIPとして最低限の動作確認は完了です。
+`outputs/YYYYMMDD_HHMMSS/renamed_file_list.xlsx`、`outputs/YYYYMMDD_HHMMSS/rename_preview.csv`、`outputs/YYYYMMDD_HHMMSS/folder_rename_preview.csv` が作成されれば、配布ZIPとして最低限の動作確認は完了です。

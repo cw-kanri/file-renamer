@@ -4,7 +4,7 @@ SharePointからエクスポートしたファイル一覧をもとに、検索�
 
 SharePointから出力した一覧Excel/CSVそのもののファイル名を変えるツールではありません。一覧ファイルの中に書かれている各ファイル行に対して、新しいファイル名と新しいパスを追加したExcelを出力します。
 
-元のファイル名は `旧ファイル名` として残します。実ファイル名の変更は行いません。
+元のファイル名・フォルダー名は残します。実ファイル名や実フォルダー名の変更は行いません。
 
 ## できること
 
@@ -16,6 +16,7 @@ SharePointから出力した一覧Excel/CSVそのもののファイル名を変�
 - ファイル名または更新日時から年月を抽出
 - ファイル状態を `raw` / `working` / `final` / `unknown` に分類
 - 旧ファイル名を残したまま、新ファイル名と新パスを追加したExcelを出力
+- SharePoint一覧内のフォルダー行から、新フォルダー名と新フォルダーパスの候補を出力
 - 新しいファイル名のプレビューCSVを出力
 - リネーム対象外ファイルを除外
 - 判定不能・低信頼度・意味不明なファイル名を中身解析候補として別出力
@@ -34,6 +35,18 @@ SharePointから出力した一覧Excel/CSVそのもののファイル名を変�
 ```text
 給与_元データ_2026-03_raw_タイムカード.xlsx
 給与_出力_2026-03_final_MF取込.csv
+```
+
+フォルダー名は次の形式で生成します。
+
+```text
+[業務分類]_[年月]_[元フォルダ名]
+```
+
+例:
+
+```text
+経費_2026-04_04_外注費・立替経費系
 ```
 
 ## 判定ルール
@@ -116,7 +129,6 @@ SharePointから出力した一覧Excel/CSVそのもののファイル名を変�
 - パスに `~BROMIUM` を含む
 - `.json` / `.log`
 - `audit` または `監査` を含む
-- SharePoint一覧上で `アイテムの種類` が `フォルダー` の行
 - サイズが0
 - `desktop.ini`、`Thumbs.db`、`.DS_Store`
 - Excelなどの一時ファイルと思われる `~$` 始まりのファイル
@@ -127,6 +139,7 @@ SharePointから出力した一覧Excel/CSVそのもののファイル名を変�
 | --- | --- |
 | `outputs/YYYYMMDD_HHMMSS/renamed_file_list.xlsx` | 元の一覧に旧ファイル名、新ファイル名、新パス、判定情報を追加したExcel |
 | `outputs/YYYYMMDD_HHMMSS/rename_preview.csv` | 新旧ファイル名、パス、判定理由、信頼度など |
+| `outputs/YYYYMMDD_HHMMSS/folder_rename_preview.csv` | フォルダー名変更候補だけを抽出したCSV |
 | `outputs/YYYYMMDD_HHMMSS/content_analysis_candidates.csv` | 中身解析候補だけを抽出したCSV |
 | `outputs/YYYYMMDD_HHMMSS/rename.log` | 実行ログ |
 

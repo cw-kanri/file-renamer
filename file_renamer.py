@@ -74,6 +74,7 @@ DEFAULT_OUTPUT_DIR = Path("outputs")
 DEFAULT_LOG_DIR = Path("logs")
 EXCEL_EXTENSIONS = {".xlsx", ".xls"}
 CSV_EXTENSIONS = {".csv"}
+FOLDER_ITEM_TYPES = {"フォルダー", "folder"}
 
 
 @dataclass(frozen=True)
@@ -201,20 +202,21 @@ def is_system_file(name: str) -> bool:
     return lowered in SYSTEM_FILE_NAMES or lowered.startswith("~$")
 
 
+def is_folder_row(row: pd.Series) -> bool:
+    return normalize_text(row.get("アイテムの種類")).lower() in FOLDER_ITEM_TYPES
+
+
 def should_exclude(row: pd.Series, name: str, path: str) -> tuple[bool, str]:
     suffix = Path(name).suffix.lower()
     text = combined_text(name, path)
-    item_type = normalize_text(row.get("アイテムの種類")).lower()
 
-    if "~bromium" in path.lower():
+    if "~bromium" in combined_text(name, path):
         return True, "~BROMIUMを含むパス"
-    if item_type in {"フォルダー", "folder"}:
-        return True, "フォルダー行"
     if suffix in EXCLUDED_EXTENSIONS:
         return True, f"対象外拡張子（{suffix}）"
     if "audit" in text or "監査" in text:
         return True, "audit系ファイル"
-    if is_zero_size(row):
+    if is_zero_size(row) and not is_folder_row(row):
         return True, "サイズ0"
     if is_system_file(name):
         return True, "システムファイル"
@@ -253,6 +255,16 @@ def build_new_name(
     return f"{prefix}_{sanitize_component(original_name)}"
 
 
+def build_new_folder_name(
+    business: str,
+    year_month: str,
+    original_name: str,
+) -> str:
+    parts = [business, year_month]
+    prefix = "_".join(sanitize_component(part) for part in parts)
+    return f"{prefix}_{sanitize_component(original_name)}"
+
+
 def confidence_score(
     business: Decision,
     file_type: Decision,
@@ -278,6 +290,7 @@ def make_preview_row(row: pd.Series) -> dict[str, object]:
     name = normalize_text(row.get("名前"))
     path = normalize_text(row.get("パス"))
     updated_at = row.get("更新日時")
+    target_type = "folder" if is_folder_row(row) else "file"
 
     excluded, exclude_reason = should_exclude(row, name, path)
     business = infer_business_category(name, path)
@@ -300,7 +313,9 @@ def make_preview_row(row: pd.Series) -> dict[str, object]:
     ]
     needs_content_analysis = bool(unknowns or score < LOW_CONFIDENCE_THRESHOLD or meaningless)
 
-    if not excluded:
+    if not excluded and target_type == "folder":
+        new_name = build_new_folder_name(business.value, year_month, name)
+    elif not excluded:
         new_name = build_new_name(business.value, file_type.value, year_month, status.value, name)
 
     reason = (
@@ -313,6 +328,7 @@ def make_preview_row(row: pd.Series) -> dict[str, object]:
     return {
         "old_name": name,
         "new_name": new_name,
+        "target_type": target_type,
         "path": path,
         "判定理由": reason,
         "business_category": business.value,
@@ -350,6 +366,12 @@ def create_preview(df: pd.DataFrame) -> pd.DataFrame:
 def build_new_path(path_value: str, old_name: str, new_name: str) -> str:
     if not new_name:
         return ""
+    if "/" in path_value and "\\" not in path_value:
+        clean_path = path_value.rstrip("/")
+        if clean_path.split("/")[-1] == old_name:
+            return "/".join(clean_path.split("/")[:-1] + [new_name])
+        return f"{clean_path}/{new_name}"
+
     path = Path(path_value)
     if path.name == old_name:
         return str(path.with_name(new_name))
@@ -359,17 +381,18 @@ def build_new_path(path_value: str, old_name: str, new_name: str) -> str:
 def create_renamed_list(df: pd.DataFrame, preview: pd.DataFrame) -> pd.DataFrame:
     output = df.reset_index(drop=True).copy()
     preview = preview.reset_index(drop=True)
+    new_paths = [
+        build_new_path(str(row["path"]), str(row["old_name"]), str(row["new_name"]))
+        for _, row in preview.iterrows()
+    ]
 
-    output.insert(0, "旧ファイル名", preview["old_name"])
-    output.insert(1, "新ファイル名", preview["new_name"])
-    output.insert(
-        2,
-        "新パス",
-        [
-            build_new_path(str(row["path"]), str(row["old_name"]), str(row["new_name"]))
-            for _, row in preview.iterrows()
-        ],
-    )
+    output.insert(0, "対象種別", preview["target_type"].map({"file": "ファイル", "folder": "フォルダー"}))
+    output.insert(1, "旧ファイル名", preview["old_name"].where(preview["target_type"].eq("file"), ""))
+    output.insert(2, "新ファイル名", preview["new_name"].where(preview["target_type"].eq("file"), ""))
+    output.insert(3, "旧フォルダ名", preview["old_name"].where(preview["target_type"].eq("folder"), ""))
+    output.insert(4, "新フォルダ名", preview["new_name"].where(preview["target_type"].eq("folder"), ""))
+    output.insert(5, "新パス", new_paths)
+    output.insert(6, "新フォルダパス", pd.Series(new_paths).where(preview["target_type"].eq("folder"), ""))
     output["リネーム対象外"] = preview["excluded"]
     output["対象外理由"] = preview["exclude_reason"]
     output["needs_content_analysis"] = preview["needs_content_analysis"]
@@ -380,6 +403,53 @@ def create_renamed_list(df: pd.DataFrame, preview: pd.DataFrame) -> pd.DataFrame
     output["年月"] = preview["year_month"]
     output["状態"] = preview["status"]
     return output
+
+
+def create_folder_preview(preview: pd.DataFrame) -> pd.DataFrame:
+    folder_rows = preview[preview["target_type"].eq("folder")].copy()
+    if folder_rows.empty:
+        return pd.DataFrame(
+            columns=[
+                "old_folder_name",
+                "new_folder_name",
+                "path",
+                "new_folder_path",
+                "判定理由",
+                "business_category",
+                "year_month",
+                "excluded",
+                "exclude_reason",
+                "needs_content_analysis",
+                "confidence_score",
+                "analysis_reason",
+            ]
+        )
+
+    folder_rows["new_folder_path"] = [
+        build_new_path(str(row["path"]), str(row["old_name"]), str(row["new_name"]))
+        for _, row in folder_rows.iterrows()
+    ]
+    return folder_rows.rename(
+        columns={
+            "old_name": "old_folder_name",
+            "new_name": "new_folder_name",
+        }
+    )[
+        [
+            "old_folder_name",
+            "new_folder_name",
+            "path",
+            "new_folder_path",
+            "判定理由",
+            "business_category",
+            "year_month",
+            "excluded",
+            "exclude_reason",
+            "needs_content_analysis",
+            "confidence_score",
+            "analysis_reason",
+        ]
+    ]
 
 
 def write_csv(df: pd.DataFrame, path: Path) -> None:
@@ -486,6 +556,13 @@ def create_sample_csv(path: Path) -> None:
                 "サイズ": 5120,
             },
             {
+                "名前": "04_外注費・立替経費系",
+                "更新日時": "2026-04-01",
+                "パス": r"C:\SharePoint\自動化_ファイルサンプル",
+                "アイテムの種類": "フォルダー",
+                "サイズ": 0,
+            },
+            {
                 "名前": "123456789.xlsx",
                 "更新日時": "2026-05-01",
                 "パス": r"C:\SharePoint\不明",
@@ -542,6 +619,11 @@ def parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
         type=Path,
         help="中身解析候補CSVの出力先。省略時は実行時刻フォルダ内",
     )
+    parser.add_argument(
+        "--folder-output",
+        type=Path,
+        help="フォルダー名変更候補CSVの出力先。省略時は実行時刻フォルダ内",
+    )
     parser.add_argument("--log", type=Path, help="ログファイルの出力先。省略時は実行時刻フォルダ内")
     parser.add_argument(
         "--create-sample",
@@ -567,6 +649,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         renamed_list_output = args.renamed_list_output or run_dir / "renamed_file_list.xlsx"
         preview_output = args.output or run_dir / "rename_preview.csv"
         analysis_output = args.analysis_output or run_dir / "content_analysis_candidates.csv"
+        folder_output = args.folder_output or run_dir / "folder_rename_preview.csv"
         log_output = args.log or run_dir / "rename.log"
         configure_logging(log_output)
         logging.info("出力フォルダ: %s", run_dir)
@@ -583,10 +666,13 @@ def main(argv: Iterable[str] | None = None) -> int:
 
         candidates = preview[preview["needs_content_analysis"]].copy()
         write_csv(candidates, analysis_output)
+        folder_preview = create_folder_preview(preview)
+        write_csv(folder_preview, folder_output)
 
         logging.info("整理済み一覧Excelを出力しました: %s", renamed_list_output)
         logging.info("プレビューを出力しました: %s", preview_output)
         logging.info("中身解析候補を出力しました: %s", analysis_output)
+        logging.info("フォルダー名変更候補を出力しました: %s", folder_output)
         logging.info("ログを出力しました: %s", log_output)
         logging.info("実ファイル名の変更は行っていません")
         return 0
